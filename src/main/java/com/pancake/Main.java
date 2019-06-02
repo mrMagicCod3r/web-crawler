@@ -1,30 +1,67 @@
 package com.pancake;
 
+import com.pancake.crawler.CrawledPagePointerProcessor;
+import com.pancake.crawler.Crawler;
+import com.pancake.crawler.CrawlerRepository;
+import com.pancake.pagereader.JSoupPageReader;
+import com.pancake.pagereader.PageReader;
+import com.pancake.pagereader.UrlNormalizer;
+import com.pancake.pagereader.UrlProcessor;
+import com.pancake.sitemap.SiteMapPrinter;
+import com.pancake.sitemap.TreeSitemapPrinter;
+import lombok.extern.slf4j.Slf4j;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@Slf4j
 public class Main {
 
-    public static void main(String[] args) throws Exception {
-        String url = "https://monzo.com";
+    public static void main(String[] args) {
 
+        String url;
 
-        LinkValidator linkValidator = new LinkValidator();
-        PageReader pageReader = new JSoupPageReader(linkValidator);
+        UrlNormalizer urlNormalizer = new UrlNormalizer();
 
-        ExecutorService executor = Executors.newFixedThreadPool(50);
-        Crawler crawler = new Crawler(pageReader, executor);
-        crawler.crawl(url);
-        crawler.getCrawled();
-
-        for (Map.Entry<String, Set<String>> pages : crawler.getCrawled().entrySet()) {
-
-            System.out.println(pages.getKey() + pages.getValue().toString());
-
+        if (args.length > 0) {
+            url = args[0];
+        } else {
+            System.out.println("You have to provide url to crawl.");
+            return;
         }
+        url = urlNormalizer.normalize(url);
+        log.info("Crawling page: {} ", url);
 
-        System.out.println("Errors: " + crawler.getErrors().size());
+        // here very advanced dependency injection framework
+        UrlProcessor urlProcessor = new UrlProcessor(urlNormalizer);
+        PageReader pageReader = new JSoupPageReader(urlProcessor);
+        CrawlerRepository crawlerRepository = new CrawlerRepository();
+        CrawledPagePointerProcessor crawledPagePointerProcessor = new CrawledPagePointerProcessor(crawlerRepository);
+
+        ExecutorService executor = Executors.newCachedThreadPool();
+        Crawler crawler = new Crawler(pageReader, executor, crawledPagePointerProcessor);
+
+        Instant start = Instant.now();
+        crawler.crawl(url);
+        Instant finish = Instant.now();
+
+        Map<String, Set<String>> crawledPages = crawlerRepository.getPages();
+
+        SiteMapPrinter siteMapPrinter = new TreeSitemapPrinter();
+        siteMapPrinter.print(url, crawledPages);
+
+        log.info("Took {} to crawl.", Duration.between(start, finish));
+        log.info("Pages count: {}", crawledPages.size());
+
+        List<Exception> crawlingExceptions = crawlerRepository.getCrawlingExceptions();
+        log.info("Errors count: {}", crawlingExceptions.size());
+        if (log.isDebugEnabled()) {
+            crawlingExceptions.forEach(exception -> log.error("Crawling exception", exception));
+        }
     }
 }
